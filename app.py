@@ -4,13 +4,20 @@ import yfinance as yf
 import FinanceDataReader as fdr
 from datetime import datetime
 
-# --- [1. 페이지 설정] ---
+# --- [1. 페이지 설정 및 디자인] ---
 st.set_page_config(page_title="ignostock v1.0", layout="wide")
+
+st.markdown("""
+    <style>
+    .main { background-color: #0F1115; }
+    div.stButton > button { font-weight: bold; border-radius: 5px; width: 100%; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- [2. 분석 핵심 클래스] ---
 class StockAnalyzer:
     def __init__(self):
-        # KRX 리스팅 데이터 미리 로드 (실패 시 빈 데이터프레임으로 방어)
+        # KRX 리스팅 로드 실패 시 빈 데이터프레임으로 에러 방지
         try:
             self.krx_listing = fdr.StockListing('KRX')
         except:
@@ -24,69 +31,60 @@ class StockAnalyzer:
 
     def get_signal_text(self, data):
         c, t, k = data.get('c', 0), data.get('t', 0), data.get('k', 0)
-        m9, m18, m27 = data.get('ma9', 0), data.get('ma18', 0), data.get('ma27', 0)
-        if t == 0: return "관망 😶🥱"
-        if c > t and c > k and (m9 > m18 > m27): return "😎강력매수👍"
-        if c < t and c < k and (m9 < m18 < m27): return "🤬강력매도👎"
-        return "관망 😶🥱"
+        if t == 0: return "관망 😶"
+        if c > t and c > k: return "😎매수👍"
+        if c < t and c < k: return "🤬매도👎"
+        return "관망 😶"
 
-    def get_analysis(self, symbol, is_us):
+    def get_analysis(self, symbol):
         try:
-            ticker_obj = yf.Ticker(symbol)
-            df = ticker_obj.history(period="10y", interval="1d")
-            if df.empty or len(df) < 10: return None
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period="10y", interval="1d")
+            if df.empty or len(df) < 26: return None
             
-            m_df = df.resample('ME').last() 
-            w_df = df.resample('W-MON').last() 
-            curr_p = float(df['Close'].iloc[-1])
-
-            def calc_signals(target_df):
-                if target_df.empty or len(target_df) < 27: return {"t":0, "k":0, "c":0}
+            w_df = df.resample('W-MON').last()
+            
+            def calc(target_df):
                 t, k = self.get_ichimoku(target_df)
-                res = {"t": t, "k": k, "c": target_df['Close'].iloc[-1]}
-                for p in [9, 18, 27]:
-                    res[f"ma{p}"] = target_df['Close'].rolling(p).mean().iloc[-1]
-                return res
+                return {"t": t, "k": k, "c": target_df['Close'].iloc[-1]}
 
-            return {
-                "curr": curr_p, "marcap": ticker_obj.info.get('marketCap', 0),
-                "d": calc_signals(df), "w": calc_signals(w_df), "m": calc_signals(m_df)
-            }
+            return {"curr": df['Close'].iloc[-1], "d": calc(df), "w": calc(w_df)}
         except: return None
 
-# --- [3. 메인 UI] ---
+# --- [3. 메인 화면] ---
 analyzer = StockAnalyzer()
-st.title("🚀 ignostock v1.0")
+st.title("🚀 ignostock v1.0 - Web Dashboard")
 
 m_choice = st.sidebar.radio("Market", ["KRX 전체", "KOSPI", "KOSDAQ", "USA"])
 
 if st.button("📊 스캔 시작"):
-    try:
-        # 시장별 열 이름 불일치 해결 (KeyError 방지)
-        if "USA" in m_choice:
-            df_raw = fdr.StockListing('NASDAQ')
-            c_key = 'Symbol' if 'Symbol' in df_raw.columns else 'Code'
-        else:
-            df_raw = fdr.StockListing('KRX')
-            c_key = 'Code' if 'Code' in df_raw.columns else 'Symbol'
-
-        results = []
-        table_area = st.empty()
-        
-        for i, (_, row) in enumerate(df_raw.head(30).iterrows()): # 테스트를 위해 30개 제한
-            sym = str(row[c_key])
-            if "USA" not in m_choice:
-                sym += ".KS" if row.get('Market') == 'KOSPI' else ".KQ"
+    with st.spinner("데이터 로드 중..."):
+        try:
+            # 시장별 리스팅 (KeyError: 'Symbol' 해결 로직)
+            if "USA" in m_choice:
+                df_raw = fdr.StockListing('NASDAQ')
+                col_name = 'Symbol' if 'Symbol' in df_raw.columns else 'Code'
+            else:
+                df_raw = fdr.StockListing('KRX')
+                col_name = 'Code' if 'Code' in df_raw.columns else 'Symbol'
             
-            res = analyzer.get_analysis(sym, ("USA" in m_choice))
-            if res:
-                results.append({
-                    "티커": sym.split('.')[0], "종목명": row['Name'], 
-                    "현재가": f"{res['curr']:,.0f}", 
-                    "단기": analyzer.get_signal_text(res['d']),
-                    "중기": analyzer.get_signal_text(res['w']),
-                    "장기": analyzer.get_signal_text(res['m'])
-                })
-                table_area.dataframe(pd.DataFrame(results), use_container_width=True)
-    except Exception as e:
-        st.error(f"오류 발생: {e}")
+            results = []
+            table_area = st.empty()
+            
+            # 상위 30개 종목 우선 스캔
+            for _, row in df_raw.head(30).iterrows():
+                sym = str(row[col_name])
+                if "USA" not in m_choice:
+                    sym += ".KS" if row.get('Market') == 'KOSPI' else ".KQ"
+                
+                res = analyzer.get_analysis(sym)
+                if res:
+                    results.append({
+                        "티커": sym.split('.')[0], "종목명": row['Name'],
+                        "현재가": f"{res['curr']:,.0f}",
+                        "단기신호": analyzer.get_signal_text(res['d']),
+                        "중기신호": analyzer.get_signal_text(res['w'])
+                    })
+                    table_area.dataframe(pd.DataFrame(results), use_container_width=True)
+        except Exception as e:
+            st.error(f"목록 로드 중 오류 발생: {e}")
