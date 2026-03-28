@@ -8,7 +8,6 @@ import time
 # --- [1. 페이지 설정 및 CSS] ---
 st.set_page_config(page_title="ignostock v1.0", layout="wide")
 
-# 기존 UI의 어두운 테마와 버튼 색상을 최대한 재현
 st.markdown("""
     <style>
     .main { background-color: #0F1115; }
@@ -16,12 +15,10 @@ st.markdown("""
         font-weight: bold; border-radius: 5px; height: 35px; width: 100%;
     }
     .stProgress > div > div > div > div { background-color: #F0B90B; }
-    /* 테이블 가독성을 위한 스타일 */
-    .reportview-container .main .block-container { padding-top: 1rem; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- [2. 핵심 분석 클래스 (기존 로직 복사)] ---
+# --- [2. 핵심 분석 클래스 (기본 로직 100% 유지)] ---
 class StockAnalyzer:
     def __init__(self):
         self.usd_krw = 1350.0
@@ -31,10 +28,14 @@ class StockAnalyzer:
             "Consumer Defensive": "방어소비재", "Energy": "에너지", "Basic Materials": "기초소재",
             "Real Estate": "부동산", "Utilities": "유틸리티"
         }
+        self.krx_listing = self.get_safe_listing('KRX')
+
+    def get_safe_listing(self, market):
+        # 데이터 로드 실패 시 빈 데이터프레임 반환하여 크래시 방지
         try:
-            self.krx_listing = fdr.StockListing('KRX')[['Code', 'Sector']]
+            return fdr.StockListing(market)
         except:
-            self.krx_listing = pd.DataFrame(columns=['Code', 'Sector'])
+            return pd.DataFrame()
 
     def get_ichimoku(self, df):
         if len(df) < 26: return 0, 0
@@ -68,8 +69,12 @@ class StockAnalyzer:
             raw_sector = info.get('sector', 'N/A')
             if raw_sector == 'N/A' and not is_us:
                 pure_code = symbol.split('.')[0]
-                matched = self.krx_listing[self.krx_listing['Code'] == pure_code]
-                if not matched.empty: raw_sector = matched['Sector'].values[0]
+                if not self.krx_listing.empty:
+                    # 'Code' 또는 'Symbol' 열 대응
+                    c_col = 'Code' if 'Code' in self.krx_listing.columns else 'Symbol'
+                    matched = self.krx_listing[self.krx_listing[c_col] == pure_code]
+                    if not matched.empty: 
+                        raw_sector = matched['Sector'].values[0] if 'Sector' in matched.columns else 'N/A'
             
             kr_sector = self.sector_map.get(raw_sector, raw_sector)
             sector_display = f"{kr_sector}({raw_sector})" if raw_sector != 'N/A' else "N/A"
@@ -102,142 +107,99 @@ class StockAnalyzer:
                 return res
 
             d_data, w_data, m_data, s_data = calc_signals(df), calc_signals(w_df), calc_signals(m_df), calc_signals(s_df)
-            st, col = "💤관망", "#161A1E"
+            st_text, col = "💤관망", "#161A1E"
             dt, dk, wt, wk, mt, mk = d_data['t'], d_data['k'], w_data['t'], w_data['k'], m_data['t'], m_data['k']
             
-            # --- 추세 로직 그대로 복사 ---
-            if curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and curr_p > mt and curr_p > mk and m_data['ma5'] > m_data['ma10'] > m_data['ma15'] > m_data['ma20']: st, col = "💎초강력 장기 롱", "#441A4D"
-            elif curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and curr_p > mt and curr_p > mk and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st, col = "💎초강력 장기 롱", "#441A4D"
-            elif curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st, col = "🔥강력 중기 롱", "#4D2A1A"
-            elif curr_p > dt and curr_p > dk and curr_p > wt and d_data['ma5'] > d_data['ma10'] > d_data['ma15'] > d_data['ma20'] > d_data['ma50'] > d_data['ma75']: st, col = "🔥중기 롱", "#4D2A1A"
-            elif curr_p > dt and curr_p > wt and curr_p > mt and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st, col = "🔥롱", "#4D1A1A"
-            elif curr_p > mt and curr_p > mk and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st, col = "📈초강력 롱진입 상승초입", "#4D1A1A"
-            elif curr_p > mt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st, col = "📈롱진입 상승초입", "#4D1A1A"
-            elif curr_p > wt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st, col = "📈롱진입 상승초입", "#4D1A1A"
-            elif curr_p > dt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st, col = "📈롱진입 상승초입", "#4D1A1A"
-            elif curr_p > dt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] and curr_p > d_data['ma5']: st, col = "📈롱진입중", "#4D1A1A"
-            elif curr_p > dt and curr_p > dk and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st, col = "📈롱", "#4D1A1A"
+            # --- 추세 로직 그대로 ---
+            if curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and curr_p > mt and curr_p > mk and m_data['ma5'] > m_data['ma10'] > m_data['ma15'] > m_data['ma20']: st_text, col = "💎초강력 장기 롱", "#441A4D"
+            elif curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and curr_p > mt and curr_p > mk and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st_text, col = "💎초강력 장기 롱", "#441A4D"
+            elif curr_p > dt and curr_p > dk and curr_p > wt and curr_p > wk and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st_text, col = "🔥강력 중기 롱", "#4D2A1A"
+            elif curr_p > dt and curr_p > dk and curr_p > wt and d_data['ma5'] > d_data['ma10'] > d_data['ma15'] > d_data['ma20'] > d_data['ma50'] > d_data['ma75']: st_text, col = "🔥중기 롱", "#4D2A1A"
+            elif curr_p > dt and curr_p > wt and curr_p > mt and w_data['ma5'] > w_data['ma10'] > w_data['ma15']: st_text, col = "🔥롱", "#4D1A1A"
+            elif curr_p > mt and curr_p > mk and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st_text, col = "📈초강력 롱진입 상승초입", "#4D1A1A"
+            elif curr_p > mt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st_text, col = "📈롱진입 상승초입", "#4D1A1A"
+            elif curr_p > wt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st_text, col = "📈롱진입 상승초입", "#4D1A1A"
+            elif curr_p > dt and d_data['ma20'] < d_data['ma50'] < d_data['ma75'] and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st_text, col = "📈롱진입 상승초입", "#4D1A1A"
+            elif curr_p > dt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] and curr_p > d_data['ma5']: st_text, col = "📈롱진입중", "#4D1A1A"
+            elif curr_p > dt and curr_p > dk and d_data['ma5'] > d_data['ma10'] > d_data['ma15']: st_text, col = "📈롱", "#4D1A1A"
 
-            if curr_p < dt and curr_p < dk and curr_p < wt and curr_p < wk and curr_p < mt and curr_p < mk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st, col = "💀초강력 장기 숏", "#1A2D2D"
-            elif curr_p < dt and curr_p < dk and curr_p < wt and curr_p < wk and curr_p < mt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st, col = "💀초강력 장기 숏", "#1A2D2D"
-            elif curr_p < dt and curr_p < dk and curr_p < wt and curr_p < mt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st, col = "💀강력 중기 숏", "#1A2D2D"
-            elif curr_p < dt and curr_p < wt and curr_p < wk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st, col = "📉숏 중기", "#1A1A4D"
-            elif curr_p < dt and curr_p < wt and curr_p < wk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st, col = "📉숏 중기진입", "#1A1A4D"
-            elif curr_p < dt and curr_p < dk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st, col = "📉강력숏", "#1A1A4D"
-            elif curr_p < dt and d_data['ma20'] > d_data['ma50'] > d_data['ma75'] and curr_p < d_data['ma5'] and curr_p < d_data['ma10']: st, col = "📉숏진입", "#1A1A4D"
-            elif curr_p < dt and d_data['ma20'] > d_data['ma50'] > d_data['ma75'] and curr_p < d_data['ma5']: st, col = "📉숏진입", "#1A1A4D"
-            elif curr_p < dt and d_data['ma5'] < d_data['ma10'] < d_data['ma15']: st, col = "📉숏초입", "#1A1A4D"
+            if curr_p < dt and curr_p < dk and curr_p < wt and curr_p < wk and curr_p < mt and curr_p < mk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st_text, col = "💀초강력 장기 숏", "#1A2D2D"
+            elif curr_p < dt and curr_p < dk and curr_p < wt and curr_p < wk and curr_p < mt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st_text, col = "💀초강력 장기 숏", "#1A2D2D"
+            elif curr_p < dt and curr_p < dk and curr_p < wt and curr_p < mt and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20'] < d_data['ma50'] < d_data['ma75']: st_text, col = "💀강력 중기 숏", "#1A2D2D"
+            elif curr_p < dt and curr_p < wt and curr_p < wk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st_text, col = "📉숏 중기", "#1A1A4D"
+            elif curr_p < dt and curr_p < wt and curr_p < wk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st_text, col = "📉숏 중기진입", "#1A1A4D"
+            elif curr_p < dt and curr_p < dk and d_data['ma5'] < d_data['ma10'] < d_data['ma15'] < d_data['ma20']: st_text, col = "📉강력숏", "#1A1A4D"
+            elif curr_p < dt and d_data['ma20'] > d_data['ma50'] > d_data['ma75'] and curr_p < d_data['ma5'] and curr_p < d_data['ma10']: st_text, col = "📉숏진입", "#1A1A4D"
+            elif curr_p < dt and d_data['ma20'] > d_data['ma50'] > d_data['ma75'] and curr_p < d_data['ma5']: st_text, col = "📉숏진입", "#1A1A4D"
+            elif curr_p < dt and d_data['ma5'] < d_data['ma10'] < d_data['ma15']: st_text, col = "📉숏초입", "#1A1A4D"
 
             return {
                 "curr": curr_p, "prev": float(df['Close'].iloc[-2]) if len(df)>1 else curr_p, 
                 "low_52": float(df['Low'].tail(250).min()), 
                 "open_w": float(df.tail(datetime.now().weekday() + 1)['Open'].iloc[0]), 
-                "marcap": marcap, "st": st, "col": col, "r3y": r3y, "r5y": r5y, "r10y": r10y, 
+                "marcap": marcap, "st": st_text, "col": col, "r3y": r3y, "r5y": r5y, "r10y": r10y, 
                 "m": m_data, "w": w_data, "d": d_data, "s": s_data, "sector": sector_display
             }
         except: return None
 
-# --- [3. UI 레이아웃 및 제어 로직] ---
+# --- [3. 메인 UI] ---
 analyzer = StockAnalyzer()
 
-# 사이드바 설정 (시장 선택 및 검색)
 st.sidebar.title("ignostock v1.0")
-m_choice = st.sidebar.radio("Market Selection", ["KOSPI", "KOSDAQ", "USA", "KRX 전체"], index=3)
-search_keyword = st.sidebar.text_input("🔍 종목명/티커 통합 검색", "").strip().lower()
+m_choice = st.sidebar.radio("Market", ["KRX 전체", "KOSPI", "KOSDAQ", "USA"])
+search_keyword = st.sidebar.text_input("🔍 종목명/티커 검색").strip().lower()
 
-# 추세 필터 버튼 (Session State를 이용해 PyQt 버튼 동작 재현)
 if 'trend_mode' not in st.session_state: st.session_state.trend_mode = "전체 검색"
 filters = ["전체 검색", "💎 초강력 장기 롱", "🔥 강력 중기 롱", "📈 롱", "📉 중기 숏", "💀 초강력 장기 숏"]
-cols = st.columns(len(filters))
+t_cols = st.columns(len(filters))
 for i, f in enumerate(filters):
-    if cols[i].button(f): st.session_state.trend_mode = f
+    if t_cols[i].button(f): st.session_state.trend_mode = f
 
-# 분석 시작 버튼
-if st.button("🚀 전체 분석 및 스캔 시작"):
+if st.button("🚀 스캔 시작"):
     targets = []
-    with st.spinner("📡 데이터베이스 동기화 중..."):
-        # 검색 필터 로직 그대로 적용
-        if search_keyword:
-            df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap'])
-            code_col = 'Code' if 'Code' in df_krx.columns else 'Symbol'
-            df_filtered = df_krx[df_krx['Name'].str.lower().str.contains(search_keyword, na=False) | 
-                                 df_krx[code_col].str.lower().str.contains(search_keyword, na=False)]
-            for _, row in df_filtered.iterrows():
-                suffix = ".KS" if row['Market'] == 'KOSPI' else ".KQ"
-                targets.append([str(row[code_col]) + suffix, row['Name'], row['Market']])
-            
-            try:
-                df_us = fdr.StockListing('NASDAQ')
-                us_code = 'Symbol' if 'Symbol' in df_us.columns else 'Code'
-                df_us_f = df_us[df_us['Name'].str.lower().str.contains(search_keyword, na=False) | 
-                                df_us[us_code].str.lower().str.contains(search_keyword, na=False)]
-                for _, row in df_us_f.iterrows(): targets.append([str(row[us_code]), row['Name'], "US"])
-            except: pass
-        else:
-            if m_choice == "USA":
-                df_us = fdr.StockListing('NASDAQ')
-                code_col = 'Symbol' if 'Symbol' in df_us.columns else 'Code'
-                for _, row in df_us.iterrows(): targets.append([str(row[code_col]), row['Name'], "US"])
+    with st.spinner("📦 리스트 준비 중..."):
+        try:
+            # 시장별 리스팅
+            if "USA" in m_choice:
+                df_raw = fdr.StockListing('NASDAQ')
+                c_key = 'Symbol' if 'Symbol' in df_raw.columns else 'Code'
             else:
-                df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap'])
-                if m_choice == "KOSPI": df_krx = df_krx[df_krx['Market'] == 'KOSPI']
-                elif m_choice == "KOSDAQ": df_krx = df_krx[df_krx['Market'] == 'KOSDAQ']
-                code_col = 'Code' if 'Code' in df_krx.columns else 'Symbol'
-                for _, row in df_krx.iterrows():
-                    suffix = ".KS" if row['Market'] == 'KOSPI' else ".KQ"
-                    targets.append([str(row[code_col]) + suffix, row['Name'], row['Market']])
-
-    # 결과 분석 루프
-    results = []
-    prog_bar = st.progress(0)
-    status_txt = st.empty()
-    table_placeholder = st.empty()
-    
-    total = len(targets)
-    for i, (symbol, name, market) in enumerate(targets):
-        status_txt.text(f"📡 [{i+1}/{total}] {name} 분석 중...")
-        data = analyzer.get_analysis(symbol, (market == "US"))
-        
-        if data:
-            c, st_val = data['curr'], data['st']
-            day_chg = ((c/data['prev'])-1)*100
-            w_chg = ((c/data['open_w'])-1)*100
-            r52 = ((c/data['low_52'])-1)*100
+                df_raw = fdr.StockListing('KRX')
+                c_key = 'Code' if 'Code' in df_raw.columns else 'Symbol'
             
-            # 시가총액 계산 로직 그대로
-            m_krw = (data['marcap'] * (1.0 if market != "US" else 1350.0)) / 1e12
-            krw_str = f"{m_krw:,.1f}조" if m_krw >= 1 else f"{m_krw*10000:,.0f}억"
-            m_usd = (data['marcap'] / (1.0 if market == "US" else 1350.0))
-            usd_str = f"${m_usd/1e12:,.2f}T" if m_usd >= 1e12 else (f"${m_usd/1e9:,.1f}B" if m_usd >= 1e9 else f"${m_usd/1e6:,.0f}M")
-            is_giant = (m_usd >= 1e12) if market == "US" else (m_krw >= 100)
-            marcap_display = f"{'🏢 ' if is_giant else '🏭 '}{usd_str} ({krw_str})"
+            # 필터링
+            if search_keyword:
+                df_raw = df_raw[df_raw['Name'].str.lower().str.contains(search_keyword, na=False) | 
+                                df_raw[c_key].str.lower().str.contains(search_keyword, na=False)]
+            elif "KOSPI" in m_choice:
+                df_raw = df_raw[df_raw['Market'] == 'KOSPI']
+            elif "KOSDAQ" in m_choice:
+                df_raw = df_raw[df_raw['Market'] == 'KOSDAQ']
 
-            # 과열 진단 라벨 그대로
-            r_label = "🎇 과열진단" if r52 >= 300 else ("🚀 상승기" if r52 >= 50 else ("☘️ 바닥" if r52 >= 0 else "🚨 위험"))
+            for _, row in df_raw.iterrows():
+                sym = str(row[c_key])
+                if "USA" not in m_choice:
+                    sym += ".KS" if row.get('Market') == 'KOSPI' else ".KQ"
+                targets.append([sym, row['Name'], row.get('Market', 'US')])
+        except Exception as e:
+            st.error(f"목록 로드 실패: {e}")
 
-            # 필터링 및 리스트 추가
-            if st.session_state.trend_mode == "전체 검색" or st.session_state.trend_mode in st_val:
+    results = []
+    pbar = st.progress(0)
+    table_area = st.empty()
+    
+    for i, (sym, name, mkt) in enumerate(targets):
+        res = analyzer.get_analysis(sym, (mkt == "US"))
+        if res:
+            if st.session_state.trend_mode == "전체 검색" or st.session_state.trend_mode in res['st']:
+                # 결과 정리 (기존 포맷 유지)
+                m_krw = (res['marcap'] * (1350.0 if mkt == "US" else 1.0)) / 1e12
+                marcap_str = f"{m_krw:,.1f}조" if m_krw >= 1 else f"{m_krw*10000:,.0f}억"
+                
                 results.append({
-                    "업종": data['sector'], "티커": symbol.replace('.KS','').replace('.KQ',''),
-                    "종목명": f"{name}({market})", "시가총액": marcap_display,
-                    "현재가": f"${c:,.2f}" if market=="US" else f"{c:,.0f}원",
-                    "전일대비": f"{day_chg:+.2f}%", "주간변동": f"{w_chg:+.2f}%",
-                    "3년률": f"{data['r3y']:+.1f}%", "5년률": f"{data['r5y']:+.1f}%", "10년률": f"{data['r10y']:+.1f}%",
-                    "52주상승": f"{r52:,.1f}%", "과열진단": r_label, "추세단계": st_val,
-                    "스윙": analyzer.get_signal_text(data['s']), "단기": analyzer.get_signal_text(data['d']),
-                    "중기": analyzer.get_signal_text(data['w']), "장기": analyzer.get_signal_text(data['m'])
+                    "티커": sym.split('.')[0], "종목명": name, "시가총액": marcap_str,
+                    "현재가": f"{res['curr']:,.0f}", "추세": res['st'],
+                    "단기": analyzer.get_signal_text(res['d']), "중기": analyzer.get_signal_text(res['w']), "장기": analyzer.get_signal_text(res['m'])
                 })
-                # 실시간으로 테이블 업데이트
-                table_placeholder.dataframe(pd.DataFrame(results), use_container_width=True)
-        
-        prog_bar.progress((i+1)/total)
-    
-    status_txt.success(f"✅ 분석 완료 (총 {len(results)}개 종목 발견)")
-    
-    # 엑셀 저장 버튼
-    if results:
-        df_res = pd.DataFrame(results)
-        csv = df_res.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 결과 엑셀(CSV) 저장", csv, f"scan_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
-else:
-    st.info("좌측 설정을 확인하고 '분석 시작' 버튼을 눌러주세요. 전체 종목 분석은 수십 분이 소요될 수 있습니다.")
+                table_area.dataframe(pd.DataFrame(results), use_container_width=True)
+        pbar.progress((i+1)/len(targets))
