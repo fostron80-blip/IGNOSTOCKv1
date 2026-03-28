@@ -6,12 +6,11 @@ from datetime import datetime
 import time 
   
 # --- [1. 페이지 설정 및 CSS] --- 
-st.set_page_config(page_title="ignostock v1.0", layout="wide") 
+st.set_config = st.set_page_config(page_title="ignostock v1.0", layout="wide") 
   
 st.markdown(""" 
     <style> 
     .main { background-color: #0F1115; } 
-    div[data-testid="stTable"] { overflow-x: auto; } 
     div.stButton > button { font-weight: bold; border-radius: 5px; height: 35px; width: 100%; } 
     .stProgress > div > div > div > div { background-color: #F0B90B; } 
     .stDataFrame { border: 1px solid #333; } 
@@ -109,57 +108,64 @@ class StockAnalyzer:
             } 
         except: return None 
   
-# --- [3. 메인 UI 및 실행] --- 
+# --- [3. 메인 UI 및 검색 실행] --- 
 analyzer = StockAnalyzer() 
 st.sidebar.title("ignostock v1.0") 
 m_choice = st.sidebar.radio("Market", ["KRX 전체", "KOSPI", "KOSDAQ", "USA"]) 
 search_keyword = st.sidebar.text_input("🔍 종목명/티커 통합 검색").strip().lower() 
 
-# 정렬 순서 정의
+# 나래비 정렬 순서 정의
 order_map = {
     "매수준비👍👍": 0, "😎매수👍": 1, "😎강력매수👍": 2, "강력상승기": 3, 
-    "관망 😶🥱": 4, "💤관망": 4, "매도관망👎": 5, "🤬매도👎": 6, 
-    "🤬지금당장매도👎👎": 7, "🤬강력매도👎👎👎": 8,
-    "💎초강력 장기 롱": 0, "🔥강력 중기 롱": 1, "🔥롱": 2, "📈초강력 롱진입 상승초입": 3, "💀초강력 장기 숏": 8
+    "관망 😶🥱": 4, "매도관망👎": 5, "🤬매도👎": 6, "🤬지금당장매도👎👎": 7, "🤬강력매도👎👎👎": 8
 }
 
+if 'run' not in st.session_state: st.session_state.run = False
 if 'sort_col' not in st.session_state: st.session_state.sort_col = None
 
-# 버튼 배치
 btn_cols = st.columns(6)
-start_search = btn_cols[0].button("🚀 분석 시작")
-btn_cols[1].button("🛑 초기화") # 리런 버튼
+if btn_cols[0].button("🚀 검색시작"): 
+    st.session_state.run = True
+    st.session_state.sort_col = None
+if btn_cols[1].button("🛑 중지(초기화)"): 
+    st.session_state.run = False
+    st.rerun()
 
-# 상단 버튼들 클릭 시 정렬 컬럼 지정 및 강제 시작 트리거
-if btn_cols[2].button("🌊 스윙"): st.session_state.sort_col = "스윙"; start_search = True
-if btn_cols[3].button("🕒 단기"): st.session_state.sort_col = "단기"; start_search = True
-if btn_cols[4].button("📅 중기"): st.session_state.sort_col = "중기"; start_search = True
-if btn_cols[5].button("📈 장기"): st.session_state.sort_col = "추세단계"; start_search = True
+# 스윙, 단기, 중기, 장기 버튼 클릭 시 즉시 검색 및 해당 열 정렬 설정
+for i, (label, col_name) in enumerate([("🌊 스윙", "스윙"), ("🕒 단기", "단기"), ("📅 중기", "중기"), ("📈 장기", "장기")]):
+    if btn_cols[i+2].button(label):
+        st.session_state.run = True
+        st.session_state.sort_col = col_name
 
-if start_search: 
+if st.session_state.run: 
     targets = [] 
-    df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap']) 
-    c_key = 'Code' if 'Code' in df_krx.columns else 'Symbol' 
-    if search_keyword: 
-        df_f = df_krx[df_krx['Name'].str.lower().str.contains(search_keyword, na=False) | df_krx[c_key].str.lower().str.contains(search_keyword, na=False)] 
-        for _, row in df_f.iterrows(): targets.append([str(row[c_key]) + (".KS" if row['Market']=='KOSPI' else ".KQ"), row['Name'], row['Market']]) 
-        try: 
-            df_us = fdr.StockListing('NASDAQ'); u_key = 'Symbol' if 'Symbol' in df_us.columns else 'Code' 
-            df_uf = df_us[df_us['Name'].str.lower().str.contains(search_keyword, na=False) | df_us[u_key].str.lower().str.contains(search_keyword, na=False)] 
-            for _, row in df_uf.iterrows(): targets.append([str(row[u_key]), row['Name'], "US"]) 
-        except: pass 
-    else: 
-        if m_choice == "USA": 
-            df_us = fdr.StockListing('NASDAQ'); u_key = 'Symbol' if 'Symbol' in df_us.columns else 'Code' 
-            for _, row in df_us.iterrows(): targets.append([str(row[u_key]), row['Name'], "US"]) 
+    with st.spinner("📊 데이터베이스 동기화 중..."): 
+        df_krx = fdr.StockListing('KRX').dropna(subset=['Marcap']) 
+        c_key = 'Code' if 'Code' in df_krx.columns else 'Symbol' 
+        if search_keyword: 
+            df_f = df_krx[df_krx['Name'].str.lower().str.contains(search_keyword, na=False) | df_krx[c_key].str.lower().str.contains(search_keyword, na=False)] 
+            for _, row in df_f.iterrows(): 
+                targets.append([str(row[c_key]) + (".KS" if row['Market']=='KOSPI' else ".KQ"), row['Name'], row['Market']]) 
+            try: 
+                df_us = fdr.StockListing('NASDAQ') 
+                u_key = 'Symbol' if 'Symbol' in df_us.columns else 'Code' 
+                df_uf = df_us[df_us['Name'].str.lower().str.contains(search_keyword, na=False) | df_us[u_key].str.lower().str.contains(search_keyword, na=False)] 
+                for _, row in df_uf.iterrows(): targets.append([str(row[u_key]), row['Name'], "US"]) 
+            except: pass 
         else: 
-            df_k = df_krx if m_choice == "KRX 전체" else df_krx[df_krx['Market'] == m_choice] 
-            for _, row in df_k.iterrows(): targets.append([str(row[c_key]) + (".KS" if row['Market']=='KOSPI' else ".KQ"), row['Name'], row['Market']]) 
+            if m_choice == "USA": 
+                df_us = fdr.StockListing('NASDAQ'); u_key = 'Symbol' if 'Symbol' in df_us.columns else 'Code'
+                for _, row in df_us.iterrows(): targets.append([str(row[u_key]), row['Name'], "US"]) 
+            else: 
+                df_k = df_krx if m_choice == "KRX 전체" else df_krx[df_krx['Market'] == m_choice] 
+                for _, row in df_k.iterrows(): targets.append([str(row[c_key]) + (".KS" if row['Market']=='KOSPI' else ".KQ"), row['Name'], row['Market']]) 
   
     results = [] 
     p_bar = st.progress(0); status = st.empty(); table_area = st.empty() 
      
     for i, (sym, name, mkt) in enumerate(targets): 
+        if not st.session_state.run: break
+        status.text(f"📡 [{i+1}/{len(targets)}] {name} 분석 중...") 
         res = analyzer.get_analysis(sym, (mkt == "US")) 
         if res: 
             m_krw = (res['marcap'] * (1.0 if mkt != "US" else 1350.0)) / 1e12 
@@ -180,12 +186,12 @@ if start_search:
                 "3년률": f"{res['r3y']:+.1f}%", "5년률": f"{res['r5y']:+.1f}%", "10년률": f"{res['r10y']:+.1f}%" 
             }) 
             
-            # 실시간 정렬(나래비) 적용
-            df_final = pd.DataFrame(results)
+            # 실시간 나래비 정렬 적용
+            final_df = pd.DataFrame(results)
             if st.session_state.sort_col:
-                df_final['sort_val'] = df_final[st.session_state.sort_col].map(order_map).fillna(9)
-                df_final = df_final.sort_values('sort_val').drop('sort_val', axis=1)
+                final_df['sort_key'] = final_df[st.session_state.sort_col].map(order_map).fillna(9)
+                final_df = final_df.sort_values('sort_key').drop('sort_key', axis=1)
             
-            table_area.dataframe(df_final, use_container_width=True, hide_index=True) 
+            table_area.dataframe(final_df, use_container_width=True, hide_index=True) 
         p_bar.progress((i+1)/len(targets)) 
     status.success(f"✅ 분석 완료 (총 {len(results)}개 종목)")
